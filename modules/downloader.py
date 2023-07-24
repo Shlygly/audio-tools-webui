@@ -1,6 +1,5 @@
 import os.path
 import time
-import zipfile
 
 import gradio as gr
 

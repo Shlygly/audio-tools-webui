@@ -36,7 +36,7 @@ def run_tts(text_source, voice_index, has_all_voices, rate_source, volume_source
         progress((index + 1) / len(voices), f"Generate text with voice {voice.name}...")
         filename = os.path.join(
             output_folder,
-            f'{len(os.listdir(OUTPUT_PATH)):05d}-{int(time.time())}-{text_slice}-({voice.name})'[:255] + '.wav'
+            f'{len(os.listdir(OUTPUT_PATH)):05d}-{int(time.time())}-{text_slice}-{voice.name}'[:251] + '.wav'
         )
         engine.setProperty("voice", voice.id)
         engine.save_to_file(text_source, filename)

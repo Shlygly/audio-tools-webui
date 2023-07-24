@@ -1,10 +1,10 @@
 import gradio as gr
 
-from modules import downloader, spleeter, tts
+from modules import downloader, spleeter_module, tts
 
 modules = [
     downloader,
-    spleeter,
+    spleeter_module,
     tts
 ]
 

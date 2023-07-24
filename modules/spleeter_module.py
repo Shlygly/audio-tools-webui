@@ -1,7 +1,6 @@
 import glob
 import importlib.resources as loader
 import os
-import shutil
 import time
 
 import gradio as gr
