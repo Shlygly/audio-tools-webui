@@ -1,106 +1,128 @@
+import asyncio
 import os
 import re
 import time
 
-import gradio as gr
+from nicegui import ui
 import pyttsx3
 
 import utils
 
 TAB_NAME = "Text to speech"
-OUTPUT_PATH = "./outputs/tts"
-
+OUTPUT_FOLDER = "tts"
 
 engine = pyttsx3.init()
 VOICES = list(engine.getProperty('voices'))
 
 
-def run_tts(text_source, voice_index, has_all_voices, rate_source, volume_source, progress=gr.Progress()):
-    output_folder = f'{OUTPUT_PATH}'
-    if not os.path.isdir(output_folder):
-        os.makedirs(output_folder)
-
-    progress(0, "Initialize...")
-
-    text_slice = re.sub(r"\W+", "-", text_source)
-
-    engine.setProperty("rate", rate_source)
-    engine.setProperty("volume", volume_source)
-    if has_all_voices:
-        voices = VOICES
-    else:
-        voices = [VOICES[voice_index]]
-
-    output_files = []
-    for index, voice in enumerate(voices):
-        progress((index + 1) / len(voices), f"Generate text with voice {voice.name}...")
-        filename = os.path.join(
-            output_folder,
-            f'{len(os.listdir(OUTPUT_PATH)):05d}-{int(time.time())}-{text_slice}-{voice.name}'[:251] + '.wav'
+def tts_iteration(text, index, voice, filename, progress_queue=None):
+    if progress_queue:
+        progress_queue.put_nowait(
+            f"Generate text with voice {voice.name} ({100 * (index + 1) // len(VOICES)}%)..."
         )
-        engine.setProperty("voice", voice.id)
-        engine.save_to_file(text_source, filename)
-        engine.runAndWait()
-        output_files.append(filename)
 
-    zip_path = None
-    if has_all_voices:
-        progress(1, "Preparing result...")
-        zip_path = os.path.join(output_folder, f"{len(os.listdir(OUTPUT_PATH)):05d}-{int(time.time())}-{text_slice}.zip")
-        utils.create_zip(zip_path, output_files, progress=progress)
-
-    return [*output_files] + [zip_path] if has_all_voices else [], utils.make_audio_list(output_files)
+    engine.setProperty("voice", voice.id)
+    engine.save_to_file(text, filename)
+    engine.runAndWait()
+    return filename
 
 
-def ui():
-    with gr.Blocks():
-        with gr.Column(variant="compact"):
-            with gr.Row(variant="compact"):
-                with gr.Column(scale=3):
-                    text_source = gr.Textbox(
-                        label="Text to read",
-                        lines=12
-                    )
-                with gr.Column(scale=1):
-                    all_voices = gr.Checkbox(
-                        label="Use all voices"
-                    )
-                    voice_source = gr.Dropdown(
-                        choices=[voice.name for voice in VOICES],
-                        value=VOICES[0].name,
-                        label="Voice",
-                        type="index"
-                    )
-                    rate_source = gr.Slider(
-                        minimum=1.0,
-                        maximum=500.0,
-                        value=float(engine.getProperty("rate")),
-                        label="Rate (words per second)"
-                    )
-                    volume_source = gr.Slider(
-                        minimum=0.0,
-                        maximum=1.0,
-                        value=1.0,
-                        label="Volume"
-                    )
+def panel(pool, queue):
+    async def run_tts():
+        with loading_info:
+            output_folder = f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}"
+            if not os.path.isdir(output_folder):
+                os.makedirs(output_folder)
 
-        with gr.Column(variant="compact"):
-            with gr.Row():
-                with gr.Column():
-                    audio_preview = utils.init_audio_list()
-                with gr.Column():
-                    output_files = gr.File(
-                        label="Output file(s)"
-                    )
+            cleanup_button.disable()
+            speak_button.disable()
 
-        with gr.Row(variant="compact"):
-            with gr.Column():
-                utils.make_cleanup_button(OUTPUT_PATH)
-            with gr.Column():
-                generate_button = gr.Button("Generate", variant="primary")
+            audio_outputs.clear()
 
-        generate_button.click(
-            fn=run_tts,
-            inputs=[text_source, voice_source, all_voices, rate_source, volume_source],
-            outputs=[output_files, audio_preview]
-        )
+            speak_button.props("loading")
+
+            queue.put_nowait("Initialize...")
+
+            text_slice = re.sub(r"\W+", "-", text_source.value)
+
+            engine.setProperty("rate", rate_source.value)
+            engine.setProperty("volume", volume_source.value)
+            if all_voices.value:
+                voices = VOICES
+            else:
+                voices = [VOICES[voice_source.value]]
+
+            output_files = []
+            loop = asyncio.get_running_loop()
+            for index, voice in enumerate(voices):
+                filename = os.path.join(
+                    f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}",
+                    f'{len(os.listdir(f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}")):05d}'
+                    f'-{int(time.time())}-{text_slice[:127]}-{voice.name}' + '.wav'
+                )
+                await loop.run_in_executor(
+                    pool, tts_iteration, text_source.value, index, voice, filename, queue
+                )
+                output_files.append(filename)
+                audio_outputs.add(filename)
+
+            if all_voices.value:
+                queue.put_nowait("Preparing result...")
+                zip_path = os.path.join(
+                    output_folder,
+                    f"{len(os.listdir(f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}')):05d}-{int(time.time())}"
+                    f"-{text_slice[:127]}.zip"
+                )
+                utils.create_zip(zip_path, output_files, progress_queue=queue)
+                audio_outputs.add_global_link("Zip Archive", zip_path)
+
+            ui.notify(f"{len(output_files)} file(s) generated !", type="positive")
+
+            speak_button.props(remove="loading")
+
+            cleanup_button.enable()
+            speak_button.enable()
+
+            queue.put_nowait("Done !")
+
+    with ui.row().classes("flex gap-4"):
+        with ui.column().classes("flex-1 flex items-stretch"):
+            with ui.row().classes("flex items-center gap-4"):
+                voice_source = ui.select(
+                    {index: voice.name for index, voice in enumerate(VOICES)},
+                    value=0,
+                    label="Voice"
+                ).classes("flex-1")
+                all_voices = ui.switch(
+                    "Speak with all available voices",
+                    value=False
+                )
+                all_voices.bind_value_to(voice_source, "enabled", lambda v: not v)
+            text_source = ui.textarea(
+                label="Text to read"
+            ).props("outlined").classes("h-full")
+        with ui.column().classes("items-center gap-0"):
+            ui.label("Rate")
+            ui.label("words per second").classes("text-xs")
+            rate_source = ui.slider(
+                min=1.0,
+                max=500.0,
+                value=float(engine.getProperty("rate"))
+            ).props("label vertical reverse").classes("my-2")
+        with ui.column().classes("items-center gap-0"):
+            ui.label("Volume")
+            ui.label("%").classes("text-xs")
+            volume_source = ui.slider(
+                min=0.0,
+                max=1.0,
+                value=1.0
+            ).props("label vertical reverse").classes("my-2")
+    with ui.row().classes("grid grid-cols-4 gap-4"):
+        audio_outputs = utils.ui_audio_list().classes("col-span-4")
+        ui.element()
+        cleanup_button = utils.ui_cleanup_button(OUTPUT_FOLDER)
+        speak_button = ui.button("Speak")
+        ui.element()
+        loading_info = utils.ui_loading_info(queue)
+
+    speak_button.on("click", run_tts)

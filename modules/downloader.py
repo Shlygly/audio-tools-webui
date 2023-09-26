@@ -1,86 +1,84 @@
+import asyncio
 import os.path
 import time
 
-import gradio as gr
+from nicegui import ui
 
 import utils
 
 TAB_NAME = "Downloader"
-OUTPUT_PATH = "./outputs/downloader"
+OUTPUT_FOLDER = "downloader"
 
 
-def run_download(links_data, audio_format, audio_quality, export_zip, progress=gr.Progress()):
-    links = [link.strip() for link in links_data.split("\n") if link.strip()]
+def panel(pool, queue):
+    async def run_download():
+        with loading_info:
+            queue.put_nowait("Start downloading...")
 
-    if len(links) > 1:
-        output_format = f'{OUTPUT_PATH}/%(epoch)010d-%(video_autonumber)02d-%(title)s'
-    else:
-        output_format = f'{OUTPUT_PATH}/%(epoch)010d-%(title)s'
+            cleanup_button.disable()
+            download_button.disable()
 
-    audio_quality = None if audio_quality.lower() == "default" else audio_quality.lower()
+            audio_outputs.clear()
 
-    output_paths, error_code = utils.simple_ydl(
-        links,
-        output_format,
-        audio_format=audio_format,
-        audio_quality=audio_quality,
-        progress=progress
-    )
+            download_button.props("loading")
 
-    audio_list_html = utils.make_audio_list(output_paths)
+            links = [link.strip() for link in links_input.value.split("\n") if link.strip()]
 
-    if export_zip and len(output_paths) > 1:
-        zip_path = os.path.join(OUTPUT_PATH, f"{int(time.time())}-Archive.zip")
-        utils.create_zip(zip_path, output_paths, progress=progress)
-        output_paths.append(zip_path)
+            if len(links) > 1:
+                output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(video_autonumber)02d-%(title)s'
+            else:
+                output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(title)s'
 
-    return output_paths, audio_list_html
+            audio_quality = None if audio_quality_select.value.lower() == "default" else audio_quality_select.value.lower()
 
+            loop = asyncio.get_running_loop()
+            output_paths, error_code = await loop.run_in_executor(
+                pool, utils.simple_ydl, links, output_format, audio_format_select.value.lower(), audio_quality, queue
+            )
 
-def ui():
-    with gr.Blocks():
-        with gr.Column(variant="compact"):
-            with gr.Row(variant="compact"):
-                with gr.Column(scale=3):
-                    links_input = gr.Textbox(
-                        label="Link(s)",
-                        placeholder="A link per line",
-                        lines=7
-                    )
-                with gr.Column(variant="compact", scale=1):
-                    audio_format_select = gr.Dropdown(
-                        ["acc", "m4a", "mp3", "ogg", "wav"],
-                        value="mp3",
-                        label="Format"
-                    )
-                    audio_quality_select = gr.Dropdown(
-                        ["Default", "32k", "96k", "128k", "160k", "192k", "256k", "320k", "Best"],
-                        value="192k",
-                        label="Quality"
-                    )
-            with gr.Row(variant="compact"):
-                export_zip = gr.Checkbox(
-                    label="Create a zip file (only if there's multiple audio files)",
-                    value=True
+            for path in output_paths:
+                audio_outputs.add(path)
+
+            if export_zip and len(output_paths) > 1:
+                zip_path = os.path.join(utils.OUTPUT_PATH, OUTPUT_FOLDER, f"{int(time.time())}-Archive.zip")
+                await loop.run_in_executor(
+                    pool, utils.create_zip, zip_path, output_paths, queue
                 )
+                audio_outputs.add_global_link("Zip Archive", zip_path)
 
-        with gr.Column(variant="compact"):
-            with gr.Row():
-                with gr.Column():
-                    audio_preview = utils.init_audio_list()
-                with gr.Column():
-                    output_files = gr.File(
-                        label="Output file(s)"
-                    )
+            ui.notify(f"{len(output_paths)} file(s) downloaded !", type="positive")
 
-        with gr.Row(variant="compact"):
-            with gr.Column():
-                utils.make_cleanup_button(OUTPUT_PATH)
-            with gr.Column():
-                download_button = gr.Button("Download", variant="primary")
+            download_button.props(remove="loading")
 
-        download_button.click(
-            fn=run_download,
-            inputs=[links_input, audio_format_select, audio_quality_select, export_zip],
-            outputs=[output_files, audio_preview]
+            cleanup_button.enable()
+            download_button.enable()
+
+            queue.put_nowait("Done !")
+
+    with ui.row().classes("grid grid-cols-4 gap-4"):
+        links_input = ui.textarea(
+            label="Link(s)",
+            placeholder="A link per line"
+        ).props("outlined").classes("col-span-3 row-span-3 h-full")
+        audio_format_select = ui.select(
+            ["acc", "m4a", "mp3", "ogg", "wav"],
+            value="mp3",
+            label="Format"
         )
+        audio_quality_select = ui.select(
+            ["Default", "32k", "96k", "128k", "160k", "192k", "256k", "320k", "Best"],
+            value="192k",
+            label="Quality"
+        )
+        export_zip = ui.switch(
+            "Create a zip file (only if there's multiple audio files)",
+            value=True
+        )
+        audio_outputs = utils.ui_audio_list().classes("col-span-4")
+        ui.element()
+        cleanup_button = utils.ui_cleanup_button(OUTPUT_FOLDER)
+        download_button = ui.button("Download")
+        ui.element()
+        loading_info = utils.ui_loading_info(queue)
+
+    download_button.on("click", run_download)
