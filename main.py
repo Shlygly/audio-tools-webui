@@ -1,7 +1,7 @@
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import Manager
 
-from nicegui import ui, app
+from nicegui import ui, app, native_mode
 
 from modules import downloader, spleeter_module, tts
 from utils import Title
@@ -19,7 +19,12 @@ pool = ProcessPoolExecutor()
 def main_page(tab: int = 0):
     queue = Manager().Queue()
 
-    with ui.element("header").classes("w-full flex flex-col items-center"):
+    with ui.element("header").classes("w-full flex flex-col items-center mb-2"):
+        with ui.row().classes("self-end flex items-center gap-1"):
+            dark_mode = ui.dark_mode(value=True)
+            ui.icon("light_mode").props("size=sm")
+            ui.switch(value=dark_mode.value).bind_value_to(dark_mode)
+            ui.icon("dark_mode").props("size=sm")
         Title("Audio Tools Utility").classes("text-4xl")
         ui.label("Some useful tools for audio management").classes("italic")
 
@@ -36,8 +41,15 @@ def main_page(tab: int = 0):
 
 app.on_shutdown(pool.shutdown)
 
-# app.native.window_args['resizable'] = False
-# app.native.start_args['debug'] = True
+app.native.window_args['resizable'] = True
+app.native.start_args['debug'] = False
 
-ui.run(title="Audio tools", dark=None)
-# ui.run(title="Audio tools", dark=None, native=True, window_size=(1000, 700), fullscreen=False)
+ui.run(
+    title="Audio tools",
+    port=native_mode.find_open_port(),
+    dark=None,
+    # native=True,
+    # window_size=(900, 600),
+    # fullscreen=False,
+    # reload=False
+)
