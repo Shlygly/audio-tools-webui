@@ -30,60 +30,63 @@ def tts_iteration(text, index, voice, filename, progress_queue=None):
 def panel(pool, queue):
     async def run_tts():
         with loading_info:
-            output_folder = f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}"
-            if not os.path.isdir(output_folder):
-                os.makedirs(output_folder)
+            try:
+                output_folder = f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}"
+                if not os.path.isdir(output_folder):
+                    os.makedirs(output_folder)
 
-            cleanup_button.disable()
-            speak_button.disable()
+                cleanup_button.disable()
+                speak_button.disable()
 
-            audio_outputs.clear()
+                audio_outputs.clear()
 
-            speak_button.props("loading")
+                speak_button.props("loading")
 
-            queue.put_nowait("Initialize...")
+                queue.put_nowait("Initialize...")
 
-            text_slice = re.sub(r"\W+", "-", text_source.value)
+                text_slice = re.sub(r"\W+", "-", text_source.value)
 
-            engine.setProperty("rate", rate_source.value)
-            engine.setProperty("volume", volume_source.value)
-            if all_voices.value:
-                voices = VOICES
-            else:
-                voices = [VOICES[voice_source.value]]
+                engine.setProperty("rate", rate_source.value)
+                engine.setProperty("volume", volume_source.value)
+                if all_voices.value:
+                    voices = VOICES
+                else:
+                    voices = [VOICES[voice_source.value]]
 
-            output_files = []
-            loop = asyncio.get_running_loop()
-            for index, voice in enumerate(voices):
-                filename = os.path.join(
-                    f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}",
-                    f'{len(os.listdir(f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}")):05d}'
-                    f'-{int(time.time())}-{text_slice[:127]}-{voice.name}' + '.wav'
-                )
-                await loop.run_in_executor(
-                    pool, tts_iteration, text_source.value, index, voice, filename, queue
-                )
-                output_files.append(filename)
-                audio_outputs.add(filename)
+                output_files = []
+                loop = asyncio.get_running_loop()
+                for index, voice in enumerate(voices):
+                    filename = os.path.join(
+                        f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}",
+                        f'{len(os.listdir(f"{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}")):05d}'
+                        f'-{int(time.time())}-{text_slice[:127]}-{voice.name}' + '.wav'
+                    )
+                    await loop.run_in_executor(
+                        pool, tts_iteration, text_source.value, index, voice, filename, queue
+                    )
+                    output_files.append(filename)
+                    audio_outputs.add(filename)
 
-            if all_voices.value:
-                queue.put_nowait("Preparing result...")
-                zip_path = os.path.join(
-                    output_folder,
-                    f"{len(os.listdir(f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}')):05d}-{int(time.time())}"
-                    f"-{text_slice[:127]}.zip"
-                )
-                utils.create_zip(zip_path, output_files, progress_queue=queue)
-                audio_outputs.add_global_link("Zip Archive", zip_path)
+                if all_voices.value:
+                    queue.put_nowait("Preparing result...")
+                    zip_path = os.path.join(
+                        output_folder,
+                        f"{len(os.listdir(f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}')):05d}-{int(time.time())}"
+                        f"-{text_slice[:127]}.zip"
+                    )
+                    utils.create_zip(zip_path, output_files, progress_queue=queue)
+                    audio_outputs.add_global_link("Zip Archive", zip_path)
 
-            ui.notify(f"{len(output_files)} file(s) generated !", type="positive")
+                ui.notify(f"{len(output_files)} file(s) generated !", type="positive")
+            except Exception as ex:
+                ui.notify(f"Error : {ex}", type="negative")
+            finally:
+                speak_button.props(remove="loading")
 
-            speak_button.props(remove="loading")
+                cleanup_button.enable()
+                speak_button.enable()
 
-            cleanup_button.enable()
-            speak_button.enable()
-
-            queue.put_nowait("Done !")
+                queue.put_nowait("Done !")
 
     with ui.row().classes("flex gap-4"):
         with ui.column().classes("flex-1 flex items-stretch"):

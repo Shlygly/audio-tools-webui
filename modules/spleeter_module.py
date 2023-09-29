@@ -30,62 +30,65 @@ INPUT_TYPES = {
 def panel(pool, queue):
     async def run_spleeter():
         with loading_info:
-            queue.put_nowait("Start downloading...")
+            try:
+                queue.put_nowait("Start downloading...")
 
-            cleanup_button.disable()
-            split_button.disable()
+                cleanup_button.disable()
+                split_button.disable()
 
-            audio_outputs.clear()
+                audio_outputs.clear()
 
-            split_button.props("loading")
+                split_button.props("loading")
 
-            output_folder = os.path.join(utils.OUTPUT_PATH, OUTPUT_FOLDER, f'{time.time()}')
-            os.makedirs(output_folder)
+                output_folder = os.path.join(utils.OUTPUT_PATH, OUTPUT_FOLDER, f'{time.time()}')
+                os.makedirs(output_folder)
 
-            if input_type.value == 0:
-                audio_input_path = os.path.join(output_folder, "source")
-                loop = asyncio.get_running_loop()
-                download_paths, error_code = await loop.run_in_executor(
-                    pool, utils.simple_ydl, input_link.value, audio_input_path, audio_format_select.value.lower(),
-                    audio_quality_select.value, queue
+                if input_type.value == 0:
+                    if not len(input_link.value):
+                        raise Exception(f"Link is empty !")
+                    audio_input_path = os.path.join(output_folder, "source")
+                    loop = asyncio.get_running_loop()
+                    download_paths, error_code = await loop.run_in_executor(
+                        pool, utils.simple_ydl, input_link.value, audio_input_path, audio_format_select.value.lower(),
+                        audio_quality_select.value, queue
+                    )
+                    if len(download_paths) > 1:
+                        raise Exception(f"Too many audio on the link {input_link.value} !")
+                    audio_input_path = download_paths[0]
+                else:
+                    if not input_file_data:
+                        raise Exception(f"No file has been uploaded !")
+                    audio_input_path = f'{output_folder}/{input_file_data.name}'
+                    with open(audio_input_path, "wb") as audio_file_pointer:
+                        audio_file_pointer.write(input_file_data.content.read())
+
+                await loop.run_in_executor(
+                    pool, utils.proceed_spleeter, audio_input_path, output_folder, model_descriptor.value, use_mwf.value,
+                    queue
                 )
-                if len(download_paths) > 1:
-                    ui.notify(f"Error : too many audio on the link {input_link.value} !", type="negative")
-                    return
-                audio_input_path = download_paths[0]
-            else:
-                if not input_file_data:
-                    ui.notify(f"Error : No file has been uploaded !", type="negative")
-                    return
-                audio_input_path = f'{output_folder}/{input_file_data.name}'
-                with open(audio_input_path, "wb") as audio_file_pointer:
-                    audio_file_pointer.write(input_file_data.content.read())
 
-            await loop.run_in_executor(
-                pool, utils.proceed_spleeter, audio_input_path, output_folder, model_descriptor.value, use_mwf.value,
-                queue
-            )
+                queue.put_nowait("Preparing result...")
+                output_paths = [audio_input_path]
+                for filename in glob.glob(f'{output_folder}/source/*.wav'):
+                    output_paths.append(filename)
+                    audio_outputs.add(filename)
 
-            queue.put_nowait("Preparing result...")
-            output_paths = [audio_input_path]
-            for filename in glob.glob(f'{output_folder}/source/*.wav'):
-                output_paths.append(filename)
-                audio_outputs.add(filename)
+                zip_path = os.path.join(output_folder, f"{int(time.time())}-Archive.zip")
+                await loop.run_in_executor(
+                    pool, utils.create_zip, zip_path, output_paths, queue
+                )
+                audio_outputs.add_global_link("Zip Archive", zip_path)
 
-            zip_path = os.path.join(output_folder, f"{int(time.time())}-Archive.zip")
-            await loop.run_in_executor(
-                pool, utils.create_zip, zip_path, output_paths, queue
-            )
-            audio_outputs.add_global_link("Zip Archive", zip_path)
+                ui.notify("Audio generated !", type="positive")
+            except Exception as ex:
+                ui.notify(f"Error : {ex}", type="negative")
+            finally:
+                split_button.props(remove="loading")
 
-            ui.notify("Audio generated !", type="positive")
+                cleanup_button.enable()
+                split_button.enable()
 
-            split_button.props(remove="loading")
-
-            cleanup_button.enable()
-            split_button.enable()
-
-            queue.put_nowait("Done !")
+                queue.put_nowait("Done !")
 
     def set_input_file_data(data):
         nonlocal input_file_data

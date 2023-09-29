@@ -13,47 +13,50 @@ OUTPUT_FOLDER = "downloader"
 def panel(pool, queue):
     async def run_download():
         with loading_info:
-            queue.put_nowait("Start downloading...")
+            try:
+                queue.put_nowait("Start downloading...")
 
-            cleanup_button.disable()
-            download_button.disable()
+                cleanup_button.disable()
+                download_button.disable()
 
-            audio_outputs.clear()
+                audio_outputs.clear()
 
-            download_button.props("loading")
+                download_button.props("loading")
 
-            links = [link.strip() for link in links_input.value.split("\n") if link.strip()]
+                links = [link.strip() for link in links_input.value.split("\n") if link.strip()]
 
-            if len(links) > 1:
-                output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(video_autonumber)02d-%(title)s'
-            else:
-                output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(title)s'
+                if len(links) > 1:
+                    output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(video_autonumber)02d-%(title)s'
+                else:
+                    output_format = f'{utils.OUTPUT_PATH}/{OUTPUT_FOLDER}/%(epoch)010d-%(title)s'
 
-            audio_quality = None if audio_quality_select.value.lower() == "default" else audio_quality_select.value.lower()
+                audio_quality = None if audio_quality_select.value.lower() == "default" else audio_quality_select.value.lower()
 
-            loop = asyncio.get_running_loop()
-            output_paths, error_code = await loop.run_in_executor(
-                pool, utils.simple_ydl, links, output_format, audio_format_select.value.lower(), audio_quality, queue
-            )
-
-            for path in output_paths:
-                audio_outputs.add(path)
-
-            if export_zip and len(output_paths) > 1:
-                zip_path = os.path.join(utils.OUTPUT_PATH, OUTPUT_FOLDER, f"{int(time.time())}-Archive.zip")
-                await loop.run_in_executor(
-                    pool, utils.create_zip, zip_path, output_paths, queue
+                loop = asyncio.get_running_loop()
+                output_paths, error_code = await loop.run_in_executor(
+                    pool, utils.simple_ydl, links, output_format, audio_format_select.value.lower(), audio_quality, queue
                 )
-                audio_outputs.add_global_link("Zip Archive", zip_path)
 
-            ui.notify(f"{len(output_paths)} file(s) downloaded !", type="positive")
+                for path in output_paths:
+                    audio_outputs.add(path)
 
-            download_button.props(remove="loading")
+                if export_zip and len(output_paths) > 1:
+                    zip_path = os.path.join(utils.OUTPUT_PATH, OUTPUT_FOLDER, f"{int(time.time())}-Archive.zip")
+                    await loop.run_in_executor(
+                        pool, utils.create_zip, zip_path, output_paths, queue
+                    )
+                    audio_outputs.add_global_link("Zip Archive", zip_path)
 
-            cleanup_button.enable()
-            download_button.enable()
+                ui.notify(f"{len(output_paths)} file(s) downloaded !", type="positive")
+            except Exception as ex:
+                ui.notify(f"Error : {ex}", type="negative")
+            finally:
+                download_button.props(remove="loading")
 
-            queue.put_nowait("Done !")
+                cleanup_button.enable()
+                download_button.enable()
+
+                queue.put_nowait("Done !")
 
     with ui.row().classes("grid grid-cols-4 gap-4"):
         links_input = ui.textarea(
